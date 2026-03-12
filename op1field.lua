@@ -464,3 +464,274 @@ function cleanup()
     for i=1,4 do m:cc(CC[i],64,OP1_CH) end
   end
 end
+
+-- ============================================================
+-- PERFORMANCE STATE TRACKING
+-- ============================================================
+
+local performance_data = {
+  last_section_change = 0,
+  section_hold_beats = 64,
+  synth_phrase_queue = {},
+  midi_queue = {},
+}
+
+-- ============================================================
+-- EXTENDED DRUM PATTERNS
+-- ============================================================
+
+local function generate_polyrhythm_pattern()
+  local patterns = {
+    {2, 3},     -- 2-3 polyrhythm
+    {3, 4},     -- 3-4 polyrhythm
+    {4, 5},     -- 4-5 polyrhythm
+  }
+  local chosen = choose(patterns)
+  return chosen
+end
+
+local function apply_swing(pattern, swing_amount)
+  -- Apply swing to every other note
+  for i = 2, #pattern, 2 do
+    if pattern[i] then
+      pattern[i] = pattern[i] + swing_amount
+    end
+  end
+  return pattern
+end
+
+local function euclidean_pattern(steps, hits)
+  -- Generate euclidean rhythm
+  local pattern = {}
+  local pattern_array = {}
+  
+  for i = 1, steps do
+    pattern_array[i] = 0
+  end
+  
+  for i = 1, hits do
+    pattern_array[math.floor((i - 1) * steps / hits) + 1] = 1
+  end
+  
+  for i = 1, steps do
+    pattern[i] = pattern_array[i] == 1
+  end
+  
+  return pattern
+end
+
+-- ============================================================
+-- ADVANCED SYNTH GENERATION
+-- ============================================================
+
+local function generate_arpeggio_pattern(chord_type, octaves)
+  local chord = CHORDS[chord_type] or CHORDS.major
+  local pattern = {}
+  
+  for octave = 1, octaves do
+    for _, interval in ipairs(chord) do
+      table.insert(pattern, scale_note(interval, octave))
+    end
+  end
+  
+  return pattern
+end
+
+local function apply_scale_quantization(note)
+  local scale = SCALES["minor"]
+  local octave = math.floor(note / 12)
+  local note_in_octave = note % 12
+  
+  local closest_scale_degree = 0
+  local min_distance = 12
+  
+  for i, degree in ipairs(scale) do
+    local distance = math.abs(note_in_octave - degree)
+    if distance < min_distance then
+      min_distance = distance
+      closest_scale_degree = degree
+    end
+  end
+  
+  return (octave * 12) + closest_scale_degree
+end
+
+-- ============================================================
+-- ADVANCED MIDI CONTROL
+-- ============================================================
+
+local function send_cc(cc_num, value, channel)
+  if midi then
+    midi:cc(cc_num, value, channel or OP1_CH)
+  end
+end
+
+local function modulate_parameter(param_index, lfo_value)
+  local cc = CC[param_index]
+  local value = math.floor(64 + (lfo_value * 63))
+  send_cc(cc, value)
+end
+
+-- ============================================================
+-- LFO MODULATION
+-- ============================================================
+
+local lfo_phases = {0, 0, 0, 0}
+local lfo_targets = {
+  {"drum", "velocity_min"},
+  {"drum", "velocity_max"},
+  {"synth", "density"},
+  {"lfo", "depth"}
+}
+
+local function update_lfo()
+  for i = 1, 4 do
+    lfo_phases[i] = (lfo_phases[i] + state.lfo.rate) % (2 * math.pi)
+    local lfo_value = math.sin(lfo_phases[i])
+    modulate_parameter(i, lfo_value)
+  end
+end
+
+-- ============================================================
+-- SECTION-AWARE PATTERN GENERATION
+-- ============================================================
+
+local function generate_section_aware_pattern()
+  local section = state.sections[state.section]
+  
+  local drum_state = state.drum
+  drum_state.density = section.density
+  drum_state.velocity_min = section.vel_min
+  drum_state.velocity_max = section.vel_max
+  
+  generate_drum_fill()
+end
+
+-- ============================================================
+-- PROBABILITY-BASED MUTATIONS
+-- ============================================================
+
+local function mutate_drum_pattern()
+  local drum_state = state.drum
+  
+  -- Randomly mutate density
+  if weighted_choice(0.3) then
+    drum_state.density = util.clamp(drum_state.density + math.random(-10, 10) / 100, 0, 1)
+  end
+  
+  -- Randomly mutate fill probability
+  if weighted_choice(0.3) then
+    drum_state.fill_prob = util.clamp(drum_state.fill_prob + math.random(-10, 10) / 100, 0, 1)
+  end
+  
+  -- Randomly mutate humanization
+  if weighted_choice(0.3) then
+    drum_state.humanize = util.clamp(drum_state.humanize + math.random(-5, 5) / 100, 0, 0.2)
+  end
+  
+  generate_drum_fill()
+end
+
+local function mutate_synth_pattern()
+  local synth_state = state.synth
+  
+  -- Randomly mutate density
+  if weighted_choice(0.3) then
+    synth_state.density = util.clamp(synth_state.density + math.random(-10, 10) / 100, 0, 1)
+  end
+  
+  -- Randomly mutate melodic range
+  if weighted_choice(0.3) then
+    synth_state.melodic_range = util.clamp(synth_state.melodic_range + math.random(-2, 2), 6, 24)
+  end
+  
+  -- Randomly mutate grace probability
+  if weighted_choice(0.3) then
+    synth_state.grace_prob = util.clamp(synth_state.grace_prob + math.random(-10, 10) / 100, 0, 0.5)
+  end
+end
+
+-- ============================================================
+-- ARPEGGIATOR SUBSYSTEM
+-- ============================================================
+
+local arpeggiator = {
+  enabled = false,
+  pattern = {},
+  position = 1,
+  speed = 2,
+}
+
+local function update_arpeggiator()
+  if not arpeggiator.enabled or #arpeggiator.pattern == 0 then
+    return
+  end
+  
+  local note = arpeggiator.pattern[arpeggiator.position]
+  if midi then
+    midi:note_on(note, 80, OP1_CH)
+    clock.sleep(0.25 / arpeggiator.speed)
+    midi:note_off(note, OP1_CH)
+  end
+  
+  arpeggiator.position = (arpeggiator.position % #arpeggiator.pattern) + 1
+end
+
+-- ============================================================
+-- SEQUENCER EVENT QUEUE
+-- ============================================================
+
+local event_queue = {}
+
+local function queue_event(event_type, data, delay)
+  table.insert(event_queue, {
+    type = event_type,
+    data = data,
+    delay = delay or 0,
+    time = clock.get_beat_sec() + delay
+  })
+end
+
+local function process_event_queue()
+  local current_time = clock.get_beat_sec()
+  
+  for i = #event_queue, 1, -1 do
+    if current_time >= event_queue[i].time then
+      local event = table.remove(event_queue, i)
+      
+      if event.type == "note" then
+        if midi then
+          midi:note_on(event.data.note, event.data.velocity, OP1_CH)
+          clock.sleep(event.data.duration)
+          midi:note_off(event.data.note, OP1_CH)
+        end
+      elseif event.type == "cc" then
+        send_cc(event.data.cc, event.data.value)
+      end
+    end
+  end
+end
+
+-- ============================================================
+-- RANDOM ACCENT GENERATION
+-- ============================================================
+
+local function generate_accent_map()
+  local accents = {}
+  for i = 1, state.pattern_len do
+    accents[i] = weighted_choice(0.2)
+  end
+  return accents
+end
+
+local accent_map = generate_accent_map()
+
+local function apply_accent(velocity, is_accented)
+  if is_accented then
+    return math.min(velocity + 20, 127)
+  else
+    return velocity - 10
+  end
+end
+
+return state
