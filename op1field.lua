@@ -1,4 +1,4 @@
--- FIELDBOT v3
+-- FIELDBOT v3.1
 -- algorithmic command center for OP-1 Field
 -- deep drum + synth pages: sections, variation, accidents
 --
@@ -24,6 +24,11 @@
 --   K1 hold   → alt
 --   K1 + K2   → play / stop
 --   K1 + K3   → reset / panic
+--
+-- NEW (v3.1):
+--   MIDI input: OP-1 Field note_on maps to sections (C2-B2) + root (upper octaves)
+--   Pattern record: K1+K2+K3 or hold to capture generative patterns
+--   Frozen pattern playback with deterministic generation
 
 local lattice   = require "lattice"
 local sequins   = require "sequins"
@@ -159,6 +164,64 @@ local SECTIONS = {
 }
 local section_seq = sequins({1,2,3,4,5,6,3,4,1,2,3,4}) -- default journey
 -- can be overridden
+
+-- ============================================================
+-- PATTERN RECORD MODE
+-- ============================================================
+local record_mode_active = false
+local recorded_drum_pattern = {}   -- [step] = {...notes}
+local recorded_synth_pattern = {}  -- [step] = note
+
+local function start_pattern_record()
+  record_mode_active = true
+  recorded_drum_pattern = {}
+  recorded_synth_pattern = {}
+  toast("RECORD: capturing pattern")
+end
+
+local function stop_pattern_record()
+  record_mode_active = false
+  toast("PATTERN: recorded & frozen")
+end
+
+local function capture_drum_event(step, notes_table)
+  if not record_mode_active then return end
+  recorded_drum_pattern[step] = notes_table
+end
+
+local function capture_synth_event(step, note)
+  if not record_mode_active then return end
+  recorded_synth_pattern[step] = note
+end
+
+-- ============================================================
+-- MIDI INPUT SECTION CONTROL
+-- ============================================================
+local function init_midi_handler()
+  if m == nil then return end
+  m.event = function(data)
+    local msg = midi.to_msg(data)
+    if msg.type == "note_on" then
+      local note = msg.note
+      -- C2-B2 (24-35): section selection 1-6
+      if note >= 24 and note <= 35 then
+        local sec_idx = math.min(6, (note - 24) % 12 + 1)
+        local sec = SECTIONS[sec_idx]
+        if sec then
+          section_state.current = sec_idx
+          apply_section(sec_idx)
+          toast("section: " .. sec.name)
+        end
+      -- Upper octaves: root note setting (C3+)
+      elseif note >= 36 then
+        local new_root = ((note - 12) % 12) + 36
+        synth.root = util.clamp(new_root, 36, 72)
+        rebuild_scale()
+        toast("root: " .. musicutil.note_num_to_name(synth.root))
+      end
+    end
+  end
+end
 
 -- ============================================================
 -- VELOCITY CURVES
@@ -329,7 +392,7 @@ local function gen_drums(section)
     for _,v in ipairs(drum_voices) do
       if drum.pattern[s][v] then
         drum.vels[s][v] = vel_curve(vc,
-          v=="kick" and 110 or v=="snare" and 95 or 80)
+          v==\"kick\" and 110 or v==\"snare\" and 95 or 80)
       else
         drum.vels[s][v] = 0
       end
@@ -545,6 +608,9 @@ local function gen_synth(section)
       synth.lengths[s] = base_gate
 
       synth.vels[s] = vel_curve(vc, synth.vel_base, synth.vel_rand)
+
+      -- Record pattern if capture mode active
+      capture_synth_event(s, note)
 
       -- capture for motif
       if #captured_motif < 4 then table.insert(captured_motif, note) end
@@ -808,6 +874,10 @@ local function build_lattice()
             drum_hit(note, hit_vel, 0.12, math.max(0, nudge))
             anim.drum_last[voice]=true
             anim.drum_flash=1.0
+            -- Record drum events if in capture mode
+            if record_mode_active and drum.pattern[ds][voice] then
+              capture_drum_event(ds, drum.pattern[ds])
+            end
           end
           ::continue::
         end
@@ -939,10 +1009,11 @@ end
 function init()
   math.randomseed(os.time())
   m=midi.connect(MIDI_DEV)
+  init_midi_handler()
 
   params:add_separator("FIELDBOT")
   params:add_number("midi_dev","MIDI device",1,4,1)
-  params:set_action("midi_dev",function(v) MIDI_DEV=v; m=midi.connect(v) end)
+  params:set_action("midi_dev",function(v) MIDI_DEV=v; m=midi.connect(v); init_midi_handler() end)
   params:add_number("op1_ch","OP-1 channel",1,16,1)
   params:set_action("op1_ch",function(v) OP1_CH=v end)
   params:add_option("scale","Scale",scale_names,1)
@@ -978,7 +1049,7 @@ function init()
   redraw_metro:start()
 
   anim.page_anim=0
-  toast("FIELDBOT v3")
+  toast("FIELDBOT v3.1")
   redraw()
 end
 
@@ -1136,6 +1207,10 @@ local function draw_section_badge(x,y)
   -- auto indicator
   if section_state.auto then
     screen.level(math.floor(3+flash*8)); screen.move(x+40,y); screen.text("AUTO")
+  end
+  -- record indicator
+  if record_mode_active then
+    screen.level(15); screen.move(x+80,y); screen.text("REC")
   end
 end
 
