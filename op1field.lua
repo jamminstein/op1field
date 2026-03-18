@@ -458,7 +458,91 @@ local arp = {
   seq_chord = nil,
 }
 
+local ARP_PATTERNS = {
+  up      = function(notes, step) return notes[((step - 1) % #notes) + 1] end,
+  down    = function(notes, step) return notes[#notes - ((step - 1) % #notes)] end,
+  bounce  = function(notes, step)
+    local cycle = #notes * 2 - 2
+    if cycle < 1 then return notes[1] end
+    local pos = (step - 1) % cycle
+    if pos < #notes then return notes[pos + 1]
+    else return notes[cycle - pos + 1] end
+  end,
+  skip    = function(notes, step)
+    local idx = ((step - 1) * 2) % #notes + 1
+    return notes[idx]
+  end,
+  cascade = function(notes, step)
+    -- plays 1,1-2,1-2-3,... building up the chord
+    local group = ((step - 1) % #notes) + 1
+    local inner = ((step - 1) % group) + 1
+    return notes[inner]
+  end,
+  trill   = function(notes, step)
+    -- alternates between root and scale tones
+    if step % 2 == 1 then return notes[1]
+    else return notes[math.min(2 + math.floor((step - 1) / 2) % (#notes - 1), #notes)] end
+  end,
+  random  = function(notes, step) return notes[math.random(1, #notes)] end,
+}
+
 local function build_arp_()
+  -- Build a set of notes from the arp chord/root in the current scale
+  local sc = get_scale(arp.root, synth.scale or "minor")
+  if not sc or #sc == 0 then return end
+
+  -- Select chord intervals based on arp.chord type
+  local CHORD_INTERVALS = {
+    minor  = {0, 3, 7},
+    major  = {0, 4, 7},
+    sus2   = {0, 2, 7},
+    sus4   = {0, 5, 7},
+    min7   = {0, 3, 7, 10},
+    dom7   = {0, 4, 7, 10},
+    maj7   = {0, 4, 7, 11},
+    power  = {0, 7, 12},
+    dim    = {0, 3, 6},
+    aug    = {0, 4, 8},
+  }
+
+  local intervals = CHORD_INTERVALS[arp.chord] or CHORD_INTERVALS.minor
+  local arp_notes = {}
+
+  -- Build notes across 2 octaves for extended arps
+  for oct = 0, 1 do
+    for _, iv in ipairs(intervals) do
+      local note = arp.root + iv + (oct * 12)
+      -- Snap to nearest scale note for musicality
+      local best, best_d = note, 999
+      for _, sn in ipairs(sc) do
+        local d = math.abs(sn - note)
+        if d < best_d then best = sn; best_d = d end
+      end
+      if best >= 24 and best <= 96 then
+        table.insert(arp_notes, best)
+      end
+    end
+  end
+
+  -- Remove duplicates
+  local seen = {}
+  local unique = {}
+  for _, n in ipairs(arp_notes) do
+    if not seen[n] then seen[n] = true; table.insert(unique, n) end
+  end
+  arp_notes = unique
+
+  if #arp_notes == 0 then return end
+
+  -- Set up the arp lattice pattern if not already running
+  local pattern_fn = ARP_PATTERNS[arp.pattern] or ARP_PATTERNS.up
+  local arp_step = 0
+
+  -- If a lattice pattern already exists, we just store the notes;
+  -- the lattice action will use the current arp state
+  arp._notes = arp_notes
+  arp._pattern_fn = pattern_fn
+  arp._step = 0
 end
 
 -- ============================================================
@@ -740,6 +824,35 @@ local function build_lattice()
         if lfo[i].on then
           local cc_val=tick_lfo(i,0.016)
           send_cc(i,cc_val)
+        end
+      end
+    end
+  }
+
+  -- ARP: variable speed arp playback
+  local arp_step_count = 0
+  patt_arp=the_lattice:new_pattern{
+    division=1/4, enabled=true,
+    action=function(t)
+      if not arp.on or glob.mute_arp then return end
+      if not arp._notes or #arp._notes == 0 then return end
+      arp_step_count = arp_step_count + 1
+      -- speed: 1=every 16th, 2=every 8th, 4=every beat
+      if arp_step_count % arp.speed ~= 0 then return end
+      arp._step = (arp._step or 0) + 1
+      local pattern_fn = arp._pattern_fn or ARP_PATTERNS.up
+      local note = pattern_fn(arp._notes, arp._step)
+      if note then
+        local vel = vel_curve(section_state.velocity_curve or "medium", 85)
+        send_note_on(note, vel)
+        clock.run(function()
+          clock.sleep(clock.get_beat_sec() * 0.2)
+          send_note_off(note)
+        end)
+        -- track for arp history visualization
+        table.insert(anim.arp_history, 1, note)
+        while #anim.arp_history > anim.arp_hist_max do
+          table.remove(anim.arp_history)
         end
       end
     end
