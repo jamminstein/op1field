@@ -2,6 +2,7 @@
 -- algorithmic command center for OP-1 Field
 -- deep drum + synth pages: sections, variation, accidents
 -- NOW WITH: status strip, parameter popup, enhanced brightness hierarchy
+-- AND: MollyThePoly engine for standalone audio output
 --
 -- PHILOSOPHY:
 --   Everything lives in one scale. Sections (verse/chorus/
@@ -31,10 +32,17 @@
 --   Parameter Popup: transient overlay on encoder changes (<0.8s)
 --   Brightness Hierarchy: visual depth via level differentiation
 --   Beat Phase: tracked for smooth pulse animations
+--   MollyThePoly: polyphonic engine for drums + synth playback
+
+engine.name = "MollyThePoly"
 
 local lattice   = require "lattice"
 local sequins   = require "sequins"
 local musicutil = require "musicutil"
+
+local function midi_to_hz(note)
+  return 440 * 2^((note - 69) / 12)
+end
 
 -- ============================================================
 -- CONFIG
@@ -49,6 +57,10 @@ local DN = {
   clap=43, tom_l=45, tom_h=47, ride=48,
   perc1=50, perc2=52,
 }
+
+-- Engine note tracking
+local engine_ids = {}
+local next_engine_id = 1
 
 -- ============================================================
 -- SCALES & HARMONY
@@ -580,20 +592,40 @@ local function rebuild_scale()
 end
 
 -- ============================================================
--- PLAYBACK
+-- PLAYBACK (with engine + MIDI)
 -- ============================================================
 local function send_note_on(note,vel)
+  -- Engine output
+  local freq = midi_to_hz(note)
+  local engine_id = next_engine_id
+  engine.noteOn(engine_id, freq, vel / 127)
+  engine_ids[note] = engine_id
+  next_engine_id = next_engine_id + 1
+  
+  -- MIDI output
   if m then m:note_on(note,math.floor(util.clamp(vel,1,127)),OP1_CH) end
 end
+
 local function send_note_off(note)
+  -- Engine output
+  local engine_id = engine_ids[note]
+  if engine_id then
+    engine.noteOff(engine_id)
+    engine_ids[note] = nil
+  end
+  
+  -- MIDI output
   if m then m:note_off(note,0,OP1_CH) end
 end
+
 local function send_cc(slot,val)
   if m then m:cc(CC[slot],math.floor(util.clamp(val,0,127)),OP1_CH) end
   anim.lfo_flash[slot]=math.max(anim.lfo_flash[slot],0.3)
 end
 
 local function stop_all()
+  engine.noteOffAll()
+  engine_ids = {}
   if m then
     for i = 0, 127 do m:note_off(i, 0, OP1_CH) end
     m:cc(123, 0, OP1_CH)
@@ -1249,6 +1281,7 @@ end
 function cleanup()
   if redraw_metro then redraw_metro:stop() end
   if the_lattice  then the_lattice:destroy() end
+  stop_all()
   if m then
     m:stop()
     for i=0,127 do m:note_off(i,0,OP1_CH) end
