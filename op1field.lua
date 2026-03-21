@@ -1302,10 +1302,9 @@ function cleanup()
   if the_lattice  then the_lattice:destroy() end
   stop_all()
   if m then
-    m:stop()
-    for i=0,127 do m:note_off(i,0,OP1_CH) end
-    m:cc(123,0,OP1_CH)
+    for ch=1,16 do m:cc(123,0,ch) end
     for i=1,4 do m:cc(CC[i],64,OP1_CH) end
   end
-  if opxy_out then opxy_out:cc(123, 0, params:get("opxy_channel")) end
+  if opxy_out then for ch=1,16 do opxy_out:cc(123,0,ch) end end
+  engine.noteKillAll()
 end
