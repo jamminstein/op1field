@@ -62,6 +62,15 @@ local DN = {
 local engine_ids = {}
 local next_engine_id = 1
 
+-- ── OP-XY MIDI output ──
+local opxy_out = nil
+local function opxy_note_on(note, vel)
+  if opxy_out then opxy_out:note_on(note, vel, params:get("opxy_channel")) end
+end
+local function opxy_note_off(note)
+  if opxy_out then opxy_out:note_off(note, 0, params:get("opxy_channel")) end
+end
+
 -- ============================================================
 -- SCALES & HARMONY
 -- ============================================================
@@ -604,6 +613,7 @@ local function send_note_on(note,vel)
   
   -- MIDI output
   if m then m:note_on(note,math.floor(util.clamp(vel,1,127)),OP1_CH) end
+  opxy_note_on(note, math.floor(util.clamp(vel,1,127)))
 end
 
 local function send_note_off(note)
@@ -613,9 +623,10 @@ local function send_note_off(note)
     engine.noteOff(engine_id)
     engine_ids[note] = nil
   end
-  
+
   -- MIDI output
   if m then m:note_off(note,0,OP1_CH) end
+  opxy_note_off(note)
 end
 
 local function send_cc(slot,val)
@@ -630,6 +641,7 @@ local function stop_all()
     for i = 0, 127 do m:note_off(i, 0, OP1_CH) end
     m:cc(123, 0, OP1_CH)
   end
+  if opxy_out then opxy_out:cc(123, 0, params:get("opxy_channel")) end
 end
 
 -- ============================================================
@@ -987,6 +999,13 @@ function init()
   params:set_action("midi_dev",function(v) MIDI_DEV=v; m=midi.connect(v); init_midi_handler() end)
   params:add_number("op1_ch","OP-1 channel",1,16,1)
   params:set_action("op1_ch",function(v) OP1_CH=v end)
+  params:add_separator("OP-XY")
+  params:add_number("opxy_device","OP-XY MIDI Device",1,4,2)
+  params:set_action("opxy_device",function(v)
+    opxy_out=midi.connect(v)
+  end)
+  params:add_number("opxy_channel","OP-XY MIDI Channel",1,16,1)
+  opxy_out=midi.connect(params:get("opxy_device"))
   params:add_option("scale","Scale",scale_names,1)
   params:set_action("scale",function(v)
     synth.scale=scale_names[v]; arp.root=synth.root-12
@@ -1288,4 +1307,5 @@ function cleanup()
     m:cc(123,0,OP1_CH)
     for i=1,4 do m:cc(CC[i],64,OP1_CH) end
   end
+  if opxy_out then opxy_out:cc(123, 0, params:get("opxy_channel")) end
 end
