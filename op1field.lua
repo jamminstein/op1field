@@ -624,7 +624,7 @@ local function send_cc(slot,val)
 end
 
 local function stop_all()
-  engine.noteOffAll()
+  engine.noteKillAll()
   engine_ids = {}
   if m then
     for i = 0, 127 do m:note_off(i, 0, OP1_CH) end
